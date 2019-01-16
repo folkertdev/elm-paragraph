@@ -248,8 +248,8 @@ stepr options w state =
     in
     case SymmetricList.last state.candidates of
         Nothing ->
-            -- TODO error
-            Debug.todo "error"
+            -- should not happen
+            state
 
         Just last ->
             let
