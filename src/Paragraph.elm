@@ -1,19 +1,16 @@
 module Paragraph exposing (Options, format, lines)
 
-{-| This package picks (close to) optimal points to break a paragraph into lines.
-
-Based on the paper [Bridging the Algorithm Gap: A Linear-time Functional Program for Paragraph Formatting][paper]
-
-[paper]: http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.33.7923&rep=rep1&type=pdf
+{-| Pick (close to) optimal points to break a paragraph into lines.
 
 @docs Options, format, lines
 
 -}
 
+import StringHelpers exposing (Line, Word)
 import SymmetricList exposing (SymmetricList)
 
 
-{-| Formatting options
+{-|
 
   - **maximumWidth**: the maximum width of a line
   - **optimalWidth**: the optimal width of a line. Often this is slightly smaller than the maximum width
@@ -28,93 +25,56 @@ type alias Options =
 
 {-| Format a string using the given options
 
-The output is one string where the lines are broken with newline `\n` characters.
+    options : Options
+    options =
+        { maximumWidth = 15
+        , optimalWidth = 12
+        , stringWidth = String.length
+        }
+
+    Paragraph.format options
+        "A delightful language for reliable webapps"
+        --> "A delightful\nlanguage\nfor reliable\nwebapps"
 
 -}
 format : Options -> String -> String
 format options =
-    unparse << List.map (paragraph options << List.concat) << parse
+    StringHelpers.unparse << List.map (paragraph options << List.concat) << StringHelpers.parse
 
 
-{-| Format a string using the given options, returning the individual lines
+{-| Get the individual lines of the formatted paragraph
+
+    options : Options
+    options =
+        { maximumWidth = 15
+        , optimalWidth = 12
+        , stringWidth = String.length
+        }
+
+    Paragraph.lines options
+        "A delightful language for reliable webapps"
+    --> ["A delightful","language","for reliable","webapps"]
+
 -}
 lines : Options -> String -> List String
-lines options =
-    List.map (String.join " ") << unparas << List.map (paragraph options << List.concat) << parse
+lines options text =
+    text
+        |> StringHelpers.parse
+        |> List.map (paragraph options << List.concat)
+        |> StringHelpers.unparas
+        |> List.map (String.trimLeft << String.join "")
 
 
 type alias Text =
     List Word
 
 
-type alias Word =
-    String
-
-
-type alias Line =
-    List Word
-
-
 type alias State =
-    { candidates : SymmetricList Paragraph, width : Int, length : Int }
+    { candidates : SymmetricList Paragraph, width : Int, numberOfWords : Int }
 
 
 type alias Paragraph =
-    { width : Int, waste : Int, length : Int }
-
-
-undo : a -> List (List a) -> List a
-undo a =
-    let
-        insert xs ys =
-            xs ++ [ a ] ++ ys
-    in
-    Maybe.withDefault [] << fold1 insert identity
-
-
-do : a -> List a -> List (List a)
-do a list =
-    case list of
-        [] ->
-            [ [] ]
-
-        first :: rest ->
-            let
-                break p q xs =
-                    if p == q then
-                        [] :: xs
-
-                    else
-                        case xs of
-                            [] ->
-                                (q :: []) :: []
-
-                            y :: ys ->
-                                (q :: y) :: ys
-
-                start p q =
-                    break p q [ [] ]
-            in
-            fold1 (break a) (start a) list
-                |> Maybe.withDefault [ [] ]
-
-
-paras =
-    List.filter (not << List.isEmpty) << do []
-
-
-unparas =
-    undo []
-
-
-parse : String -> List (List Line)
-parse =
-    paras << List.map String.words << String.lines
-
-
-unparse : List (List Line) -> String
-unparse =
-    String.join "\n" << List.map (String.join " ") << unparas
+    { width : Int, waste : Int, numberOfWords : Int }
 
 
 
@@ -138,11 +98,11 @@ isSingleton list =
 
 single : Paragraph -> Bool
 single p =
-    p.length == 0
+    p.numberOfWords == 0
 
 
 stepr : Options -> Int -> State -> State
-stepr options w state =
+stepr options wordWidth state =
     let
         waste : Paragraph -> Int
         waste p =
@@ -154,24 +114,24 @@ stepr options w state =
 
         width_hd : Paragraph -> Int
         width_hd p =
-            tot_width - p.width - 1
+            tot_width - p.width
 
         tot_width : Int
         tot_width =
-            w + 1 + state.width
+            wordWidth + state.width
 
         tot_len : Int
         tot_len =
-            1 + state.length
+            1 + state.numberOfWords
 
         -- adds a new line to the front of a paragraph
         new : Paragraph -> Paragraph
         new p =
             if single p then
-                { width = state.width, waste = 0, length = state.length }
+                { width = state.width, waste = 0, numberOfWords = state.numberOfWords }
 
             else
-                { width = state.width, waste = p.width + (options.optimalWidth - old_width_hd p) ^ 2, length = state.length }
+                { width = state.width, waste = p.width + (options.optimalWidth - old_width_hd p) ^ 2, numberOfWords = state.numberOfWords }
 
         old_width_hd : Paragraph -> Int
         old_width_hd p =
@@ -194,8 +154,9 @@ stepr options w state =
                                 ps_pq
 
                         Just p ->
+                            -- the actual condition that decised whether to keep a candidate
                             if waste p <= waste q || width_hd q > options.maximumWidth then
-                                -- current candidate is bad, discard it and continue
+                                -- current candidate is worse than the next one, discard it and continue
                                 discardBadCandidates ps_p
 
                             else
@@ -259,16 +220,17 @@ stepr options w state =
                 newCandidates =
                     discardBadCandidates input
             in
-            { candidates = newCandidates, width = tot_width, length = tot_len }
+            { candidates = newCandidates, width = tot_width, numberOfWords = tot_len }
 
 
 startr : Int -> State
 startr width =
     -- if width <= options.maximumWidth then
     -- NOTE this will proceed even if a word is longer than the maximum allowed width
-    { candidates = SymmetricList.singleton { width = 0, waste = 0, length = 0 }
+    -- also the last word on a line has no waste
+    { candidates = SymmetricList.singleton { width = 0, waste = 0, numberOfWords = 0 }
     , width = width
-    , length = 1
+    , numberOfWords = 1
     }
 
 
@@ -276,44 +238,52 @@ startr width =
 -}
 paragraph : Options -> Text -> List Line
 paragraph options words =
+    -- TODO more opportunities for fusion exist
     let
-        zs : List State
-        zs =
-            List.map options.stringWidth words
-                |> scan1 (stepr options) startr
+        states : List State
+        states =
+            scan1 (stepr options << options.stringWidth) (startr << options.stringWidth) words
     in
-    case zs of
+    case states of
         [] ->
             []
 
         first :: rest ->
             let
                 targetLength =
-                    first.length
+                    first.numberOfWords
+                        |> Debug.log "target length"
 
                 wordLengths =
-                    List.filterMap (Maybe.map .length << SymmetricList.last << .candidates) zs
+                    List.filterMap (Maybe.map .numberOfWords << SymmetricList.last << .candidates) states
+                        |> Debug.log "word lengths"
             in
-            tile words ( wordLengths, targetLength )
+            tileWords words wordLengths targetLength
 
 
-tile : Text -> ( List Int, Int ) -> List Line
-tile words ( wordLengths, targetLength ) =
+tileWords : Text -> List Int -> Int -> List Line
+tileWords =
+    tileWordsHelp []
+
+
+tileWordsHelp : List Line -> Text -> List Int -> Int -> List Line
+tileWordsHelp accum words wordLengths targetLength =
     case wordLengths of
         [] ->
-            []
+            List.reverse accum
 
         m :: ms ->
             let
-                remainingSpace =
+                wordsRemaining =
                     targetLength - m
 
                 ( usedWords, remainingWords ) =
-                    splitAt remainingSpace words
+                    splitAt wordsRemaining words
             in
-            usedWords :: tile remainingWords ( List.drop remainingSpace (m :: ms), m )
+            tileWordsHelp (usedWords :: accum) remainingWords (List.drop (wordsRemaining - 1) ms) m
 
 
+scan1 : (a -> b -> b) -> (a -> b) -> List a -> List b
 scan1 f g list =
     let
         g_ a =
@@ -322,51 +292,43 @@ scan1 f g list =
         f_ a s =
             case s of
                 [] ->
-                    s
+                    []
 
                 first :: rest ->
                     f a first :: s
     in
-    fold1 f_ g_ list
-        |> Maybe.withDefault []
-
-
-fold1 f g list =
     case list of
         [] ->
-            Nothing
+            []
 
-        [ a ] ->
-            Just (g a)
+        x :: xs ->
+            fold1 f_ g_ ( x, xs )
 
-        a :: x ->
-            Maybe.map (\xs -> f a xs) (fold1 f g x)
+
+fold1 : (a -> b -> b) -> (a -> b) -> ( a, List a ) -> b
+fold1 f g ( first, rest ) =
+    case rest of
+        [] ->
+            g first
+
+        x :: xs ->
+            f first (fold1 f g ( x, xs ))
 
 
 splitAt : Int -> List a -> ( List a, List a )
 splitAt n xs =
-    ( List.take n xs, List.drop n xs )
+    splitAtHelper n [] xs
 
 
-paragraph1 =
-    "Þá er Ísland fannst og byggðist af Noregi, var Adríánus páfi í Róma og Jóhannes eftir hann, sá er hinn fimmti var með því nafni í postuligu sæti, en Hlöðver Hlöðversson keisari fyrir norðan fjall, en Leó og Alexander son hans yfir Miklagarði; þá var Haraldur hárfagri konungur yfir Noregi, en Eiríkur Eymundarson í Svíþjóð og Björn son hans, en Gormur hinn gamli að Danmörk, en Elfráður hinn ríki í Englandi og Játvarður son hans, en Kjarvalur að Dyflinni, Sigurður jarl hinn ríki í Orkneyjum."
+splitAtHelper : Int -> List a -> List a -> ( List a, List a )
+splitAtHelper n taken remaining =
+    if n <= 0 then
+        ( List.reverse taken, remaining )
 
+    else
+        case remaining of
+            [] ->
+                ( List.reverse taken, [] )
 
-kafli1 =
-    String.split " "
-        """Þá er Ísland fannst og byggðist af Noregi, var Adríánus páfi í Róma og Jóhannes eftir hann, sá er hinn fimmti var með því nafni í postuligu sæti, en Hlöðver Hlöðversson keisari fyrir norðan fjall, en Leó og Alexander son hans yfir Miklagarði; þá var Haraldur hárfagri konungur yfir Noregi, en Eiríkur Eymundarson í Svíþjóð og Björn son hans, en Gormur hinn gamli að Danmörk, en Elfráður hinn ríki í Englandi og Játvarður son hans, en Kjarvalur að Dyflinni, Sigurður jarl hinn ríki í Orkneyjum.
-
-Svo segja vitrir menn, að úr Noregi frá Staði sé sjö dægra sigling í vestur til Horns á Íslandi austanverðu, en frá Snæfellsnesi, þar er skemmst er, er fjögurra dægra haf í vestur til Grænlands. En svo er sagt, ef siglt er úr Björgyn rétt í vestur til Hvarfsins á Grænlandi, að þá mun siglt vera tylft fyrir sunnan Ísland. Frá Reykjanesi á sunnanverðu Íslandi er fimm dægra haf til Jölduhlaups á Írlandi (í suður; en frá Langanesi á norðanverðu Íslandi er) fjögurra dægra haf norður til Svalbarða í hafsbotn.
-
-Svo er sagt, að menn skyldu fara úr Noregi til Færeyja; nefna sumir til Naddodd víking; en þá rak vestur í haf og fundu þar land mikið. Þeir gengu upp í Austfjörðum á fjall eitt hátt og sáust um víða, ef þeir sæju reyki eða nokkur líkindi til þess, að landið væri byggt, og sáu þeir það ekki.
-
-Þeir fóru aftur um haustið til Færeyja; og er þeir sigldu af landinu, féll snær mikill á fjöll, og fyrir það kölluðu þeir landið Snæland. Þeir lofuðu mjög landið.
-
-Þar heitir nú Reyðarfjall í Austfjörðum, er þeir höfðu að komið. Svo sagði Sæmundur prestur hinn fróði.
-
-Maður hét Garðar Svavarsson, sænskur að ætt; hann fór að leita Snælands að tilvísan móður sinnar framsýnnar. Hann kom að landi fyrir austan Horn hið eystra; þar var þá höfn. Garðar sigldi umhverfis landið og vissi, að það var eyland. Hann var um veturinn norður í Húsavík á Skjálfanda og gerði þar hús.
-
-Um vorið, er hann var búinn til hafs, sleit frá honum mann á báti, er hét Náttfari, og þræl og ambátt. Hann byggði þar síðan, er heitir Náttfaravík.
-
-Garðar fór þá til Noregs og lofaði mjög landið. Hann var faðir Una, föður Hróars Tungugoða. Eftir það var landið kallað Garðarshólmur, og var þá skógur milli fjalls og fjöru.
-"""
+            x :: xs ->
+                splitAtHelper (n - 1) (x :: taken) xs

@@ -1,5 +1,6 @@
 module Example exposing (result)
 
+import Dict
 import Paragraph
 
 
